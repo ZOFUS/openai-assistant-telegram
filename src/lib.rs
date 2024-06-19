@@ -14,8 +14,6 @@ use std::env;
 pub async fn on_deploy() {
     logger::init();
 
-    // create_thread().await;
-
     let telegram_token = env::var("telegram_token").unwrap();
     listen_to_update(telegram_token).await;
 }
@@ -89,6 +87,11 @@ async fn run_message(thread_id: &str, text: String) -> String {
     let client = Client::new();
     let assistant_id = env::var("ASSISTANT_ID").unwrap();
 
+    if let Err(e) = check_and_wait_for_active_run(&client, thread_id).await {
+        log::error!("Failed to wait for active run: {:?}", e);
+        return String::from("Failed to wait for active run.");
+    }
+
     let mut create_message_request = CreateMessageRequestArgs::default().build().unwrap();
     create_message_request.content = text;
     if let Err(e) = client.threads().messages(&thread_id).create(create_message_request).await {
@@ -156,3 +159,22 @@ async fn run_message(thread_id: &str, text: String) -> String {
     }
 }
 
+async fn check_and_wait_for_active_run(client: &Client, thread_id: &str) -> Result<(), String> {
+    let mut run_active = true;
+    for _ in 0..5 {
+        let active_runs = match client.threads().runs(&thread_id).list(&[("status", "in_progress")]).await {
+            Ok(runs) => runs.data,
+            Err(e) => return Err(format!("Failed to list runs: {:?}", e)),
+        };
+        if active_runs.is_empty() {
+            run_active = false;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    if run_active {
+        Err(String::from("Run is still active after waiting."))
+    } else {
+        Ok(())
+    }
+}
