@@ -66,7 +66,8 @@ async fn create_thread() -> String {
             to.id
         }
         Err(e) => {
-            panic!("Failed to create thread. {:?}", e);
+            log::error!("Failed to create thread: {:?}", e);
+            String::from("Failed to create thread.")
         }
     }
 }
@@ -79,7 +80,7 @@ async fn delete_thread(thread_id: &str) {
             log::info!("Old thread (ID: {}) deleted.", thread_id);
         }
         Err(e) => {
-            log::error!("Failed to delete thread. {:?}", e);
+            log::error!("Failed to delete thread: {:?}", e);
         }
     }
 }
@@ -115,6 +116,9 @@ async fn run_message(thread_id: &str, text: String) -> String {
                 return String::from("Failed to retrieve run.");
             }
         };
+
+        log::info!("Run object: {:?}", run_object);
+
         result = match run_object.status {
             RunStatus::Queued | RunStatus::InProgress | RunStatus::Cancelling => {
                 continue;
@@ -151,3 +155,4 @@ async fn run_message(thread_id: &str, text: String) -> String {
         }
     }
 }
+
