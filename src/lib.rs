@@ -159,7 +159,7 @@ async fn run_message(thread_id: &str, text: String) -> String {
     }
 }
 
-async fn check_and_wait_for_active_run(client: &Client, thread_id: &str) -> Result<(), String> {
+async fn check_and_wait_for_active_run<C: async_openai::OpenAIClient>(client: &Client<C>, thread_id: &str) -> Result<(), String> {
     let mut run_active = true;
     for _ in 0..5 {
         let active_runs = match client.threads().runs(thread_id).list(&[("status", "in_progress")]).await {
