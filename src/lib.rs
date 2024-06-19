@@ -14,14 +14,14 @@ use std::env;
 pub async fn on_deploy() {
     logger::init();
 
-    let telegram_token = env::var("telegram_token").unwrap();
+    let telegram_token = env::var("telegram_token").expect("telegram_token must be set");
     listen_to_update(telegram_token).await;
 }
 
 #[update_handler]
 async fn handler(update: tg_flows::Update) {
     logger::init();
-    let telegram_token = env::var("telegram_token").unwrap();
+    let telegram_token = env::var("telegram_token").expect("telegram_token must be set");
     let tele = Telegram::new(telegram_token);
 
     if let UpdateKind::Message(msg) = update.kind {
@@ -29,13 +29,13 @@ async fn handler(update: tg_flows::Update) {
         let chat_id = msg.chat.id;
 
         let thread_id = match store_flows::get(chat_id.to_string().as_str()) {
-            Some(ti) => match text == "/restart" {
-                true => {
+            Some(ti) => {
+                if text == "/restart" {
                     delete_thread(ti.as_str().unwrap()).await;
                     store_flows::del(chat_id.to_string().as_str());
                     return;
                 }
-                false => ti.as_str().unwrap().to_owned(),
+                ti.as_str().unwrap().to_owned()
             },
             None => {
                 let ti = create_thread().await;
@@ -85,7 +85,7 @@ async fn delete_thread(thread_id: &str) {
 
 async fn run_message(thread_id: &str, text: String) -> String {
     let client = Client::new();
-    let assistant_id = env::var("ASSISTANT_ID").unwrap();
+    let assistant_id = env::var("ASSISTANT_ID").expect("ASSISTANT_ID must be set");
 
     if let Err(e) = check_and_wait_for_active_run(&client, thread_id).await {
         log::error!("Failed to wait for active run: {:?}", e);
@@ -94,14 +94,14 @@ async fn run_message(thread_id: &str, text: String) -> String {
 
     let mut create_message_request = CreateMessageRequestArgs::default().build().unwrap();
     create_message_request.content = text;
-    if let Err(e) = client.threads().messages(&thread_id).create(create_message_request).await {
+    if let Err(e) = client.threads().messages(thread_id).create(create_message_request).await {
         log::error!("Failed to create message: {:?}", e);
         return String::from("Failed to create message.");
     }
 
     let mut create_run_request = CreateRunRequestArgs::default().build().unwrap();
     create_run_request.assistant_id = assistant_id;
-    let run_id = match client.threads().runs(&thread_id).create(create_run_request).await {
+    let run_id = match client.threads().runs(thread_id).create(create_run_request).await {
         Ok(res) => res.id,
         Err(e) => {
             log::error!("Failed to create run: {:?}", e);
@@ -112,7 +112,7 @@ async fn run_message(thread_id: &str, text: String) -> String {
     let mut result = Some("Timeout");
     for _ in 0..5 {
         tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-        let run_object = match client.threads().runs(&thread_id).retrieve(run_id.as_str()).await {
+        let run_object = match client.threads().runs(thread_id).retrieve(run_id.as_str()).await {
             Ok(ro) => ro,
             Err(e) => {
                 log::error!("Failed to retrieve run: {:?}", e);
@@ -138,7 +138,7 @@ async fn run_message(thread_id: &str, text: String) -> String {
     match result {
         Some(r) => String::from(r),
         None => {
-            let mut thread_messages = match client.threads().messages(&thread_id).list(&[("limit", "1")]).await {
+            let mut thread_messages = match client.threads().messages(thread_id).list(&[("limit", "1")]).await {
                 Ok(tm) => tm,
                 Err(e) => {
                     log::error!("Failed to list messages: {:?}", e);
@@ -162,7 +162,7 @@ async fn run_message(thread_id: &str, text: String) -> String {
 async fn check_and_wait_for_active_run(client: &Client, thread_id: &str) -> Result<(), String> {
     let mut run_active = true;
     for _ in 0..5 {
-        let active_runs = match client.threads().runs(&thread_id).list(&[("status", "in_progress")]).await {
+        let active_runs = match client.threads().runs(thread_id).list(&[("status", "in_progress")]).await {
             Ok(runs) => runs.data,
             Err(e) => return Err(format!("Failed to list runs: {:?}", e)),
         };
