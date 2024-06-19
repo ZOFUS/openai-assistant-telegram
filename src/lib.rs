@@ -7,6 +7,7 @@ use async_openai::{
 };
 use flowsnet_platform_sdk::logger;
 use tg_flows::{listen_to_update, update_handler, Telegram, UpdateKind};
+use std::env;
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -15,14 +16,14 @@ pub async fn on_deploy() {
 
     // create_thread().await;
 
-    let telegram_token = std::env::var("telegram_token").unwrap();
+    let telegram_token = env::var("telegram_token").unwrap();
     listen_to_update(telegram_token).await;
 }
 
 #[update_handler]
 async fn handler(update: tg_flows::Update) {
     logger::init();
-    let telegram_token = std::env::var("telegram_token").unwrap();
+    let telegram_token = env::var("telegram_token").unwrap();
     let tele = Telegram::new(telegram_token);
 
     if let UpdateKind::Message(msg) = update.kind {
@@ -85,36 +86,35 @@ async fn delete_thread(thread_id: &str) {
 
 async fn run_message(thread_id: &str, text: String) -> String {
     let client = Client::new();
-    let assistant_id = std::env::var("ASSISTANT_ID").unwrap();
+    let assistant_id = env::var("ASSISTANT_ID").unwrap();
 
     let mut create_message_request = CreateMessageRequestArgs::default().build().unwrap();
     create_message_request.content = text;
-    client
-        .threads()
-        .messages(&thread_id)
-        .create(create_message_request)
-        .await
-        .unwrap();
+    if let Err(e) = client.threads().messages(&thread_id).create(create_message_request).await {
+        log::error!("Failed to create message: {:?}", e);
+        return String::from("Failed to create message.");
+    }
 
     let mut create_run_request = CreateRunRequestArgs::default().build().unwrap();
     create_run_request.assistant_id = assistant_id;
-    let run_id = client
-        .threads()
-        .runs(&thread_id)
-        .create(create_run_request)
-        .await
-        .unwrap()
-        .id;
+    let run_id = match client.threads().runs(&thread_id).create(create_run_request).await {
+        Ok(res) => res.id,
+        Err(e) => {
+            log::error!("Failed to create run: {:?}", e);
+            return String::from("Failed to create run.");
+        }
+    };
 
     let mut result = Some("Timeout");
     for _ in 0..5 {
         tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-        let run_object = client
-            .threads()
-            .runs(&thread_id)
-            .retrieve(run_id.as_str())
-            .await
-            .unwrap();
+        let run_object = match client.threads().runs(&thread_id).retrieve(run_id.as_str()).await {
+            Ok(ro) => ro,
+            Err(e) => {
+                log::error!("Failed to retrieve run: {:?}", e);
+                return String::from("Failed to retrieve run.");
+            }
+        };
         result = match run_object.status {
             RunStatus::Queued | RunStatus::InProgress | RunStatus::Cancelling => {
                 continue;
@@ -131,20 +131,23 @@ async fn run_message(thread_id: &str, text: String) -> String {
     match result {
         Some(r) => String::from(r),
         None => {
-            let mut thread_messages = client
-                .threads()
-                .messages(&thread_id)
-                .list(&[("limit", "1")])
-                .await
-                .unwrap();
+            let mut thread_messages = match client.threads().messages(&thread_id).list(&[("limit", "1")]).await {
+                Ok(tm) => tm,
+                Err(e) => {
+                    log::error!("Failed to list messages: {:?}", e);
+                    return String::from("Failed to list messages.");
+                }
+            };
 
-            let c = thread_messages.data.pop().unwrap();
-            let c = c.content.into_iter().filter_map(|x| match x {
-                MessageContent::Text(t) => Some(t.text.value),
-                _ => None,
-            });
-
-            c.collect()
+            if let Some(c) = thread_messages.data.pop() {
+                let texts: Vec<String> = c.content.into_iter().filter_map(|x| match x {
+                    MessageContent::Text(t) => Some(t.text.value),
+                    _ => None,
+                }).collect();
+                texts.join("\n")
+            } else {
+                String::from("No messages found.")
+            }
         }
     }
 }
